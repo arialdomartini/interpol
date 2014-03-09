@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Interpol by kode4food</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+    <script src="javascripts/respond.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <!--[if lt IE 8]>
+    <link rel="stylesheet" href="stylesheets/ie.css">
+    <![endif]-->
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+
+  </head>
+  <body>
+      <div id="header">
+        <nav>
+          <li class="fork"><a href="https://github.com/kode4food/interpol">View On GitHub</a></li>
+          <li class="downloads"><a href="https://github.com/kode4food/interpol/zipball/master">ZIP</a></li>
+          <li class="downloads"><a href="https://github.com/kode4food/interpol/tarball/master">TAR</a></li>
+          <li class="title">DOWNLOADS</li>
+        </nav>
+      </div><!-- end header -->
+
+    <div class="wrapper">
+
+      <section>
+        <div id="title">
+          <h1>Interpol</h1>
+          <p>Templates Sans Facial Hair</p>
+          <hr>
+          <span class="credits left">Project maintained by <a href="https://github.com/kode4food">kode4food</a></span>
+          <span class="credits right">Hosted on GitHub Pages &mdash; Theme by <a href="https://twitter.com/michigangraham">mattgraham</a></span>
+        </div>
+
+        <p>Interpol is an HTML Templating System</p>
+
+<p><a href="http://badge.fury.io/gh/kode4food%2Finterpol"><img src="https://badge.fury.io/gh/kode4food%2Finterpol.png" alt="GitHub version"></a> <a href="https://travis-ci.org/kode4food/interpol"><img src="https://travis-ci.org/kode4food/interpol.png?branch=master" alt="Build Status"></a></p>
+
+<p><img src="/kode4food/interpol/wiki/img/logo-small.png" align="right">There are a lot of templating systems out there and they're all similar.  In truth, Interpol isn't so different, which might beg the question:</p>
+
+<pre><code>Why the hell another templating system?
+</code></pre>
+
+<p>The answer is simple.  I'm sick of looking at a template and feeling as though coding takes a back-seat to presentation.  The two roles seem to have blurred completely in recent years, so why the distinction?  I'm also sick of looking at a template and being unable to read the thing, even if it's one that I wrote yesterday.  That's why I developed Interpol.</p>
+
+<p>That said, Interpol's goals are modest:</p>
+
+<ul>
+<li>Provide easy to read/write templates that operate against JSON data</li>
+<li>Work well in both Node.js and the Browser</li>
+<li>Focus on an experience that favors dynamic content creation</li>
+</ul><p>This last goal is important because the templates we're creating are often devoid of static content.  So why must we 'escape' into a dynamic content mode using braces or processing instructions?  Why don't we just start in that mode and stay there?</p>
+
+<div class="highlight highlight-html"><pre><span class="nt">&lt;html&gt;</span>
+  <span class="nt">&lt;head&gt;</span>
+    <span class="nt">&lt;title&gt;</span>"a static title"<span class="nt">&lt;/title&gt;</span>
+  <span class="nt">&lt;/head&gt;</span>
+  <span class="nt">&lt;body&gt;</span>
+    "this is a list with %length items" % list
+    <span class="nt">&lt;ul&gt;</span>
+    for item in list
+      <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
+        item.name
+      <span class="nt">&lt;/li&gt;</span>
+    end
+    <span class="nt">&lt;/ul&gt;</span>
+  <span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</pre></div>
+
+<p>The only static element on this page was its title, and usually even that isn't static.  So what did we do to escape <em>it</em> for static rendering?  We wrapped it in quotes.  The rest of the page was a clean mixture of HTMLish elements and dynamic content.</p>
+
+<p>I say 'HTMLish' because it's not pure HTML.  The values of attributes are also evaluated.  For example:</p>
+
+<div class="highlight highlight-html"><pre><span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
+</pre></div>
+
+<p><code>class=item.type</code> outputs a class attribute whose value is taken from the item.type property.  <code>id="id-%" % item.id</code> outputs an id attribute whose value is interpolated from the item.id property.</p>
+
+<p>That's all well and good, but what about the ability to reuse templates?  Well, to do that you define partials:</p>
+
+<div class="highlight highlight-html"><pre>def renderItem(item)
+  <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
+    item.name
+  <span class="nt">&lt;/li&gt;</span>
+end
+
+def renderList(list)
+  <span class="nt">&lt;ul&gt;</span>
+  for item in list
+    renderItem(item)
+  end
+  <span class="nt">&lt;/ul&gt;</span>
+end
+
+<span class="nt">&lt;html&gt;</span>
+  <span class="nt">&lt;head&gt;</span>
+    <span class="nt">&lt;title&gt;</span>"a static title"<span class="nt">&lt;/title&gt;</span>
+  <span class="nt">&lt;/head&gt;</span>
+  <span class="nt">&lt;body&gt;</span>
+    "this is a list with %length items" % list
+    renderList(list)
+  <span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</pre></div>
+
+<p>What if you use these partials in multiple templates?  Then you can move them out into their own module called <code>mystuff.int</code></p>
+
+<div class="highlight highlight-html"><pre># this is mystuff.int
+
+def renderItem(item)
+  <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
+    item.name
+  <span class="nt">&lt;/li&gt;</span>
+end
+
+def renderList(list)
+  <span class="nt">&lt;ul&gt;</span>
+  for item in list
+    renderItem(item)
+  end
+  <span class="nt">&lt;/ul&gt;</span>
+end
+</pre></div>
+
+<p>And import them like so:</p>
+
+<div class="highlight highlight-html"><pre>from mystuff import renderList
+
+<span class="nt">&lt;html&gt;</span>
+  <span class="nt">&lt;head&gt;</span>
+    <span class="nt">&lt;title&gt;</span>"a static title"<span class="nt">&lt;/title&gt;</span>
+  <span class="nt">&lt;/head&gt;</span>
+  <span class="nt">&lt;body&gt;</span>
+    "this is a list with %length items" % list
+    renderList(list)
+  <span class="nt">&lt;/body&gt;</span>
+<span class="nt">&lt;/html&gt;</span>
+</pre></div>
+
+<h2>
+<a name="resources" class="anchor" href="#resources"><span class="octicon octicon-link"></span></a>Resources</h2>
+
+<p>For the latest releases, please see the <a href="https://github.com/kode4food/interpol">Interpol GitHub Page</a></p>
+
+<p>For more information about how to use Interpol, please see the <a href="https://github.com/kode4food/interpol/blob/master/doc/API_Reference.md">API Reference</a>
+ or the <a href="https://github.com/kode4food/interpol/blob/master/README.md">README</a></p>
+
+<p>For more information about the language itself, please see the <a href="https://github.com/kode4food/interpol/blob/master/doc/Language_Reference.md">Language Reference</a></p>
+
+<p>For a brief introduction to Interpol and its motivations, see this <a href="http://slid.es/kode4food/interpol-intro">Presentation</a></p>
+
+<p>To play around with Interpol, go to the <a href="http://jsfiddle.net/kode4food/Py2xq/">JSFiddle Example</a></p>
+      </section>
+
+    </div>
+    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
+    
+  </body>
+</html>
