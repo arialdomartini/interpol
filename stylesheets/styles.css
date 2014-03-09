@@ -623,17 +623,10 @@ blockquote {
 }
 
 code {
-  font-family: "Lucida Sans", Monaco, Bitstream Vera Sans Mono, Lucida Console, Terminal;
-  color: #efefef;
-  font-size: 13px;
-  margin: 0 4px;
-  padding: 4px 6px;
-  -moz-border-radius: 2px;
-  -webkit-border-radius: 2px;
-  -o-border-radius: 2px;
-  -ms-border-radius: 2px;
-  -khtml-border-radius: 2px;
-  border-radius: 2px;
+  --font-family: "Lucida Sans", Monaco, Bitstream Vera Sans Mono, Lucida Console, Terminal;
+  background-color:#bbbbbb;
+  color:#444444;
+  padding: 2px 4px;
 }
 
 pre {
