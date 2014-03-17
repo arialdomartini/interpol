@@ -12,11 +12,17 @@
 // Set the Interpol browser global
 window.$interpol = require('../lib/interpol');
 
+// Resolvers
 require('../lib/resolvers/system');
 require('../lib/resolvers/helper');
 require('../lib/resolvers/memory');
 
-},{"../lib/interpol":3,"../lib/resolvers/helper":5,"../lib/resolvers/memory":6,"../lib/resolvers/system":7}],2:[function(require,module,exports){
+// Writers
+require('../lib/writers/null');
+require('../lib/writers/array');
+require('../lib/writers/dom');
+
+},{"../lib/interpol":3,"../lib/resolvers/helper":5,"../lib/resolvers/memory":6,"../lib/resolvers/system":8,"../lib/writers/array":14,"../lib/writers/dom":15,"../lib/writers/null":16}],2:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -30,7 +36,13 @@ require('../lib/resolvers/memory');
 var util = require('./util')
   , stringify = util.stringify;
 
-var ParamRegex = /(.?)%(([1-9][0-9]*)|([$_a-zA-Z][$_a-zA-Z0-9]*))?/;
+var nullWriter;
+
+var Digits = "[1-9][0-9]*"
+  , Ident = "[$_a-zA-Z][$_a-zA-Z0-9]*"
+  , Params = "(.?)%(("+Digits+")|("+Ident+"))?(([|]"+Ident+")*)?";
+
+var ParamRegex = new RegExp(Params);
 
 function buildTemplate(formatStr) {
   var funcs = []
@@ -66,7 +78,14 @@ function buildTemplate(formatStr) {
       idx = parseInt(paramMatch[3], 10) - 1;
     }
 
-    funcs.push(createIndexedFunction(idx));
+    if ( typeof paramMatch[5] !== 'undefined' ) {
+      var formatters = paramMatch[5].slice(1).split('|');
+      funcs.push(createPipedFunction(idx, formatters));
+    }
+    else {
+      funcs.push(createIndexedFunction(idx));
+    }
+
     formatStr = formatStr.substring(matchIdx + matchLen);
   }
   flen = funcs.length;
@@ -87,11 +106,10 @@ function buildTemplate(formatStr) {
   }
 
   function createLiteralFunction(literal) {
-    var str = stringify(literal);
     return literalFunction;
 
     function literalFunction() {
-      return str;
+      return literal;
     }
   }
 
@@ -102,12 +120,37 @@ function buildTemplate(formatStr) {
       return stringify(data[idx]);
     }
   }
+
+  function createPipedFunction(idx, formatters) {
+    var funcs = formatters.reverse()
+      , flen = funcs.length - 1;
+
+    if ( !nullWriter ) {
+      var createNullWriter = require('./writers/null').createNullWriter;
+      nullWriter = createNullWriter();
+    }
+
+    return pipedFunction;
+
+    function pipedFunction(data) {
+      var value = data[idx];
+      for ( var i = flen; i >= 0; i-- ) {
+        var func = data[funcs[i]];
+        if ( typeof func !== 'function' || !func.__interpolPartial ) {
+          // TODO: Do something better here
+          continue;
+        }
+        value = func(nullWriter, value);
+      }
+      return stringify(value);
+    }
+  }
 }
 
 // Exports
 exports.buildTemplate = buildTemplate;
 
-},{"./util":8}],3:[function(require,module,exports){
+},{"./util":13,"./writers/null":16}],3:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -119,7 +162,6 @@ exports.buildTemplate = buildTemplate;
 "use strict";
 
 var util = require('./util')
-  , writers = require('./writers')
   , format = require('./format');
 
 var isArray = util.isArray
@@ -127,12 +169,10 @@ var isArray = util.isArray
   , extendContext = util.extendContext
   , freezeObject = util.freezeObject
   , stringify = util.stringify
-  , createArrayWriter = writers.createArrayWriter
   , buildTemplate = format.buildTemplate;
 
-var CURRENT_VERSION = "0.2.1"
+var CURRENT_VERSION = "0.3.0"
   , TemplateCacheMax = 256
-  , NullWriter = writers.createNullWriter()
   , globalOptions = { writer: null, errorCallback: null }
   , globalContext = {}
   , globalResolvers = []
@@ -201,6 +241,9 @@ function parse(template) {
 }
 
 function compile(parseOutput, localOptions) {
+  var createArrayWriter = interpol.createArrayWriter
+    , NullWriter = interpol.createNullWriter();
+
   var Evaluators = freezeObject({
     im: createModuleEvaluator,
     mi: createImportEvaluator,
@@ -242,6 +285,7 @@ function compile(parseOutput, localOptions) {
     , evaluator = wrapEvaluator(parseOutput.n)
     , exportedContext = null;
 
+  compiledTemplate.configure = configure;
   compiledTemplate.exports = templateExports;
   return freezeObject(compiledTemplate);
 
@@ -249,16 +293,12 @@ function compile(parseOutput, localOptions) {
     var ctx = mixin(extendContext(globalContext), obj)
       , processingOptions = mixin({}, globalOptions, localOptions);
 
-    var writer = processingOptions.writer
-      , content = null;
-
-    if ( !writer ) {
-      content = [];
-      writer = createArrayWriter(content);
-    }
+    var writer = processingOptions.writer || createArrayWriter();
 
     try {
+      writer.startRender();
       evaluator(ctx, writer);
+      return writer.endRender();
     }
     catch ( err ) {
       if ( typeof processingOptions.errorCallback === 'function' ) {
@@ -268,8 +308,14 @@ function compile(parseOutput, localOptions) {
       // Re-raise if no callback
       throw err;
     }
+  }
 
-    return content ? content.join('') : null;
+  function configure(localOptions) {
+    return configuredTemplate;
+
+    function configuredTemplate(obj) {
+      return compiledTemplate(obj, localOptions);
+    }
   }
 
   function templateExports() {
@@ -990,7 +1036,7 @@ function compile(parseOutput, localOptions) {
 // Exports
 module.exports = interpol;
 
-},{"./format":2,"./util":8,"./writers":10}],4:[function(require,module,exports){
+},{"./format":2,"./util":13}],4:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1207,17 +1253,62 @@ interpol.createMemoryResolver = createMemoryResolver;
 
 "use strict";
 
-var interpol = require('../interpol')
-  , util = require('../util');
+var util = require('../../util')
+  , isArray = util.isArray;
+  
+function first(writer, value) {
+  if ( !isArray(value) ) {
+    return value;
+  }
+  return value[0];
+}
 
-var isArray = util.isArray
-  , slice = Array.prototype.slice;
+function join(writer, value, delim) {
+  if ( isArray(value) ) {
+    return value.join(delim || ' ');
+  }
+  return value;
+}
+
+function last(writer, value) {
+  if ( !isArray(value) ) {
+    return value;
+  }
+  if ( value.length ) return value[value.length - 1];
+  return null;
+}
+
+function empty(writer, value) {
+  return !value || !value.length;
+}
+
+// Exports
+exports.first = first;
+exports.join = join;
+exports.last = last;
+exports.empty = empty;
+
+},{"../../util":13}],8:[function(require,module,exports){
+/**
+ * Interpol (Templates Sans Facial Hair)
+ * Licensed under the MIT License
+ * see doc/LICENSE.md
+ *
+ * @author Thom Bradford (github/kode4food)
+ */
+
+"use strict";
+
+var interpol = require('../../interpol')
+  , util = require('../../util');
+
+var freezeObject = util.freezeObject;
 
 // Implementation ***********************************************************
 
 function createSystemResolver() {
-  var modules = buildModules()
-    , resolver = { resolveExports: resolveExports };
+  var resolver = { resolveExports: resolveExports }
+    , modules = buildModules();
 
   return resolver;
 
@@ -1226,23 +1317,13 @@ function createSystemResolver() {
   }
 }
 
-function wrapFunction(func) {
-  wrappedFunction.__interpolPartial = true;
-  return wrappedFunction;
-
-  function wrappedFunction(writer) {
-    /* jshint validthis:true */
-    return func.apply(this, slice.call(arguments, 1));
-  }
-}
-
 function buildModules() {
-  return {
-    "math": blessModule(buildMathModule()),
-    "array": blessModule(buildArrayModule()),
-    "string": blessModule(buildStringModule()),
-    "json": blessModule(buildJSONModule())
-  };
+  return freezeObject({
+    math: blessModule(require('./math')),
+    array: blessModule(require('./array')),
+    string: blessModule(require('./string')),
+    json: blessModule(require('./json'))
+  });
 }
 
 function blessModule(module) {
@@ -1251,142 +1332,6 @@ function blessModule(module) {
     result[key] = interpol.bless(module[key]);
   }
   return result;
-}
-
-function buildMathModule() {
-  return {
-    "number": wrapFunction(Number),
-
-    "abs": wrapFunction(Math.abs),
-    "acos": wrapFunction(Math.acos),
-    "asin": wrapFunction(Math.asin),
-    "atan": wrapFunction(Math.atan),
-    "atan2": wrapFunction(Math.atan2),
-    "ceil": wrapFunction(Math.ceil),
-    "cos": wrapFunction(Math.cos),
-    "exp": wrapFunction(Math.exp),
-    "floor": wrapFunction(Math.floor),
-    "log": wrapFunction(Math.log),
-    "pow": wrapFunction(Math.pow),
-    "round": wrapFunction(Math.round),
-    "sin": wrapFunction(Math.sin),
-    "sqrt": wrapFunction(Math.sqrt),
-    "tan": wrapFunction(Math.tan),
-    
-    "avg": function avg(writer, value) {
-      if ( !isArray(value) ) {
-        return typeof value === 'number' ? value : NaN;
-      }
-      if ( value.length === 0 ) return 0;
-      for ( var i = 0, r = 0, l = value.length; i < l; r += value[i++] );
-      return r / l;
-    },
-
-    "count": function count(writer, value) {
-      return isArray(value) ? value.length : 0;
-    },
-
-    "max": function max(writer, value) {
-      if ( !isArray(value) ) {
-        return typeof value === 'number' ? value : NaN;
-      }
-      return Math.max.apply(Math, value);
-    },
-
-    "median": function median(writer, value) {
-      if ( !isArray(value) ) {
-        return typeof value === 'number' ? value : NaN;
-      }
-      if ( value.length === 0 ) return 0;
-      var temp = value.slice(0).order();
-      if ( temp.length % 2 === 0 ) {
-        var mid = temp.length / 2;
-        return (temp[mid - 1] + temp[mid]) / 2;
-      }
-      return temp[(temp.length + 1) / 2];
-    },
-
-    "min": function min(writer, value) {
-      if ( !isArray(value) ) {
-        return typeof value === 'number' ? value : NaN;
-      }
-      return Math.min.apply(Math, value);
-    },
-
-    "sum": function sum(writer, value) {
-      if ( !isArray(value) ) {
-        return typeof value === 'number' ? value : NaN;
-      }
-      for ( var i = 0, res = 0, l = value.length; i < l; res += value[i++] );
-      return res;
-    }
-  };
-}
-
-function buildArrayModule() {
-  return {
-    "first": function first(writer, value) {
-      if ( !isArray(value) ) {
-        return value;
-      }
-      return value[0];
-    },
-
-    "last": function last(writer, value) {
-      if ( !isArray(value) ) {
-        return value;
-      }
-      if ( value.length ) return value[value.length - 1];
-      return null;
-    },
-
-    "empty": function empty(writer, value) {
-      if ( !isArray(value) ) {
-        return typeof value === 'undefined' || value === null;
-      }
-      return !value.length;
-    }
-  };
-}
-
-function buildStringModule() {
-  return {
-    "string": wrapFunction(String),
-
-    "lower": function lower(writer, value) {
-      return typeof value === 'string' ? value.toLowerCase() : value;
-    },
-
-    "split": function split(writer, value, delim, idx) {
-      var val = String(value).split(delim || ' \n\r\t');
-      return typeof idx !== 'undefined' ? val[idx] : val;
-    },
-
-    "join": function join(writer, value, delim) {
-      if ( Array.isArray(value) ) {
-        return value.join(delim || '');
-      }
-      return value;
-    },
-
-    "title": function title(writer, value) {
-      if ( typeof value !== 'string' ) return value;
-      return value.replace(/\w\S*/g, function (word) {
-        return word.charAt(0).toUpperCase() + word.substr(1).toLowerCase();
-      });
-    },
-
-    "upper": function upper(writer, value) {
-      return typeof value === 'string' ? value.toUpperCase() : value;
-    }
-  };
-}
-
-function buildJSONModule() {
-  return {
-    "parse": wrapFunction(JSON.parse),
-    "stringify": wrapFunction(JSON.stringify)
-  };
 }
 
 // Add Default System Resolver
@@ -1398,7 +1343,180 @@ interpol.resolvers().push(systemResolver);
 exports.createSystemResolver = createSystemResolver;
 interpol.createSystemResolver = createSystemResolver;
 
-},{"../interpol":3,"../util":8}],8:[function(require,module,exports){
+},{"../../interpol":3,"../../util":13,"./array":7,"./json":9,"./math":10,"./string":11}],9:[function(require,module,exports){
+/**
+ * Interpol (Templates Sans Facial Hair)
+ * Licensed under the MIT License
+ * see doc/LICENSE.md
+ *
+ * @author Thom Bradford (github/kode4food)
+ */
+
+"use strict";
+
+var wrapFunction = require('./wrap');
+
+// Exports
+exports.parse = wrapFunction(JSON.parse);
+exports.stringify = wrapFunction(JSON.stringify);
+
+},{"./wrap":12}],10:[function(require,module,exports){
+/**
+ * Interpol (Templates Sans Facial Hair)
+ * Licensed under the MIT License
+ * see doc/LICENSE.md
+ *
+ * @author Thom Bradford (github/kode4food)
+ */
+
+"use strict";
+
+var util = require('../../util')
+  , isArray = util.isArray;
+
+var wrapFunction = require('./wrap');
+
+function avg(writer, value) {
+  if ( !isArray(value) ) {
+    return typeof value === 'number' ? value : NaN;
+  }
+  if ( value.length === 0 ) return 0;
+  for ( var i = 0, r = 0, l = value.length; i < l; r += value[i++] );
+  return r / l;
+}
+
+function count(writer, value) {
+  return isArray(value) ? value.length : 0;
+}
+
+function max(writer, value) {
+  if ( !isArray(value) ) {
+    return typeof value === 'number' ? value : NaN;
+  }
+  return Math.max.apply(Math, value);
+}
+
+function median(writer, value) {
+  if ( !isArray(value) ) {
+    return typeof value === 'number' ? value : NaN;
+  }
+  if ( value.length === 0 ) return 0;
+  var temp = value.slice(0).order();
+  if ( temp.length % 2 === 0 ) {
+    var mid = temp.length / 2;
+    return (temp[mid - 1] + temp[mid]) / 2;
+  }
+  return temp[(temp.length + 1) / 2];
+}
+
+function min(writer, value) {
+  if ( !isArray(value) ) {
+    return typeof value === 'number' ? value : NaN;
+  }
+  return Math.min.apply(Math, value);
+}
+
+function sum(writer, value) {
+  if ( !isArray(value) ) {
+    return typeof value === 'number' ? value : NaN;
+  }
+  for ( var i = 0, res = 0, l = value.length; i < l; res += value[i++] );
+  return res;
+}
+
+// Exports
+exports.avg = avg;
+exports.count = count;
+exports.max = max;
+exports.median = median;
+exports.min = min;
+exports.sum = sum;
+
+exports.number = wrapFunction(Number);
+exports.abs = wrapFunction(Math.abs);
+exports.acos = wrapFunction(Math.acos);
+exports.asin = wrapFunction(Math.asin);
+exports.atan = wrapFunction(Math.atan);
+exports.atan2 = wrapFunction(Math.atan2);
+exports.ceil = wrapFunction(Math.ceil);
+exports.cos = wrapFunction(Math.cos);
+exports.exp = wrapFunction(Math.exp);
+exports.floor = wrapFunction(Math.floor);
+exports.log = wrapFunction(Math.log);
+exports.pow = wrapFunction(Math.pow);
+exports.round = wrapFunction(Math.round);
+exports.sin = wrapFunction(Math.sin);
+exports.sqrt = wrapFunction(Math.sqrt);
+exports.tan = wrapFunction(Math.tan);
+
+},{"../../util":13,"./wrap":12}],11:[function(require,module,exports){
+/**
+ * Interpol (Templates Sans Facial Hair)
+ * Licensed under the MIT License
+ * see doc/LICENSE.md
+ *
+ * @author Thom Bradford (github/kode4food)
+ */
+
+"use strict";
+
+var wrapFunction = require('./wrap');
+
+function lower(writer, value) {
+  return typeof value === 'string' ? value.toLowerCase() : value;
+}
+
+function split(writer, value, delim, idx) {
+  var val = String(value).split(delim || ' \n\r\t');
+  return typeof idx !== 'undefined' ? val[idx] : val;
+}
+
+function title(writer, value) {
+  if ( typeof value !== 'string' ) return value;
+  return value.replace(/\w\S*/g, function (word) {
+    return word.charAt(0).toUpperCase() + word.substr(1).toLowerCase();
+  });
+}
+
+function upper(writer, value) {
+  return typeof value === 'string' ? value.toUpperCase() : value;
+}
+
+// Exports
+exports.lower = lower;
+exports.split = split;
+exports.title = title;
+exports.upper = upper;
+
+exports.string = wrapFunction(String);
+
+},{"./wrap":12}],12:[function(require,module,exports){
+/**
+ * Interpol (Templates Sans Facial Hair)
+ * Licensed under the MIT License
+ * see doc/LICENSE.md
+ *
+ * @author Thom Bradford (github/kode4food)
+ */
+
+"use strict";
+
+var slice = Array.prototype.slice;
+
+function wrapFunction(func) {
+  wrappedFunction.__interpolPartial = true;
+  return wrappedFunction;
+
+  function wrappedFunction(writer) {
+    /* jshint validthis:true */
+    return func.apply(this, slice.call(arguments, 1));
+  }
+}
+
+// Exports
+module.exports = wrapFunction;
+
+},{}],13:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1537,7 +1655,7 @@ exports.escapeContent = escapeContent;
 exports.stringify = stringify;
 exports.formatSyntaxError = formatSyntaxError;
 
-},{}],9:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1548,14 +1666,21 @@ exports.formatSyntaxError = formatSyntaxError;
 
 "use strict";
 
-var util = require('../util');
+var interpol = require('../interpol')
+  , util = require('../util');
 
 var freezeObject = util.freezeObject
   , escapeAttribute = util.escapeAttribute
   , escapeContent = util.escapeContent;
 
+function noOp() {}
+
 function createArrayWriter(arr) {
+  arr = arr || [];
+
   return freezeObject({
+    startRender: noOp,
+    endRender: endRender,
     startElement: startElement,
     selfCloseElement: selfCloseElement,
     endElement: endElement,
@@ -1564,6 +1689,10 @@ function createArrayWriter(arr) {
     content: content,
     rawContent: rawContent
   });
+
+  function endRender() {
+    return arr.join('');
+  }
 
   function writeAttributes(attributes) {
     for ( var key in attributes ) {
@@ -1608,8 +1737,9 @@ function createArrayWriter(arr) {
 
 // Exports
 exports.createArrayWriter = createArrayWriter;
+interpol.createArrayWriter = createArrayWriter;
 
-},{"../util":8}],10:[function(require,module,exports){
+},{"../interpol":3,"../util":13}],15:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1619,12 +1749,66 @@ exports.createArrayWriter = createArrayWriter;
  */
 
 "use strict";
+
+var interpol = require('../interpol')
+  , util = require('../util')
+  , array = require('./array');
+
+var freezeObject = util.freezeObject
+  , mixin = util.mixin
+  , createArrayWriter = array.createArrayWriter;
+
+var REPLACE = createDOMWriter.REPLACE = 'replace'
+  , APPEND = createDOMWriter.APPEND = 'append'
+  , INSERT = createDOMWriter.INSERT = 'insert';
+
+function createDOMWriter(parentElement, renderMode) {
+  var arr = []
+    , writer = createArrayWriter(arr)
+    , endRender;
+
+  switch ( renderMode ) {
+    case APPEND:  endRender = appendEndRender; break;
+    case INSERT:  endRender = insertEndRender; break;
+    case REPLACE: endRender = replaceEndRender; break;
+    default:      endRender = replaceEndRender;
+  }
+
+  return freezeObject(mixin({}, writer, {
+    startRender: startRender,
+    endRender: endRender
+  }));
+
+  function startRender() {
+    // Just in case
+    arr.length = 0;
+  }
+
+  function appendEndRender() {
+    var container = document.createElement("span");
+    container.innerHTML = arr.join('');
+    arr.length = 0;
+    parentElement.appendChild(container);
+  }
+
+  function insertEndRender() {
+    var container = document.createElement("span");
+    container.innerHTML = arr.join('');
+    arr.length = 0;
+    parentElement.insertBefore(container, parentElement.firstChild);
+  }
+
+  function replaceEndRender() {
+    parentElement.innerHTML = arr.join('');
+    arr.length = 0;
+  }
+}
 
 // Exports
-exports.createNullWriter = require('./null').createNullWriter;
-exports.createArrayWriter = require('./array').createArrayWriter;
+exports.createDOMWriter = createDOMWriter;
+interpol.createDOMWriter = createDOMWriter;
 
-},{"./array":9,"./null":11}],11:[function(require,module,exports){
+},{"../interpol":3,"../util":13,"./array":14}],16:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1635,7 +1819,8 @@ exports.createArrayWriter = require('./array').createArrayWriter;
 
 "use strict";
 
-var util = require('../util');
+var interpol = require('../interpol')
+  , util = require('../util');
 
 var freezeObject = util.freezeObject;
 
@@ -1643,6 +1828,8 @@ function noOp() {}
 
 function createNullWriter() {
   return freezeObject({
+    startRender: noOp,
+    endRender: noOp,
     startElement: noOp,
     selfCloseElement: noOp,
     endElement: noOp,
@@ -1655,5 +1842,6 @@ function createNullWriter() {
 
 // Exports
 exports.createNullWriter = createNullWriter;
+interpol.createNullWriter = createNullWriter;
 
-},{"../util":8}]},{},[1])
+},{"../interpol":3,"../util":13}]},{},[1])
