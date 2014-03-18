@@ -41,6 +41,7 @@ var nullWriter;
 var Digits = "[1-9][0-9]*"
   , Ident = "[$_a-zA-Z][$_a-zA-Z0-9]*"
   , Params = "(.?)%(("+Digits+")|("+Ident+"))?(([|]"+Ident+")*)?";
+             // "%" ( digits | identifier )? ( "|" identifier )*
 
 var ParamRegex = new RegExp(Params);
 
@@ -92,14 +93,14 @@ function buildTemplate(formatStr) {
 
   return templateFunction;
 
-  function templateFunction(data) {
+  function templateFunction(data, ctx) {
     if ( typeof data !== 'object' || data === null ) {
       data = [data];
     }
 
     var output = [];
     for ( var i = 0; i < flen; i++ ) {
-      output[i] = funcs[i](data);
+      output[i] = funcs[i](data, ctx);
     }
 
     return output.join('');
@@ -132,14 +133,26 @@ function buildTemplate(formatStr) {
 
     return pipedFunction;
 
-    function pipedFunction(data) {
+    function pipedFunction(data, ctx) {
       var value = data[idx];
       for ( var i = flen; i >= 0; i-- ) {
-        var func = data[funcs[i]];
-        if ( typeof func !== 'function' || !func.__interpolPartial ) {
-          // TODO: Do something better here
-          continue;
+        var funcName = funcs[i]
+          , func = data[funcName]
+          , type = typeof func;
+
+        if ( type === 'undefined' ) {
+          // Only fall back to context if func is not in data at all
+          func = ctx[funcName];
+          type = typeof func;
         }
+
+        if ( type !== 'function' || !func.__interpolFunction ) {
+          if ( ctx.__interpolExports ) {
+            continue;
+          }
+          throw new Error("Attempting to call an unblessed function");
+        }
+
         value = func(nullWriter, value);
       }
       return stringify(value);
@@ -171,7 +184,7 @@ var isArray = util.isArray
   , stringify = util.stringify
   , buildTemplate = format.buildTemplate;
 
-var CURRENT_VERSION = "0.3.0"
+var CURRENT_VERSION = "0.3.1"
   , TemplateCacheMax = 256
   , globalOptions = { writer: null, errorCallback: null }
   , globalContext = {}
@@ -210,11 +223,11 @@ function bless(func) {
     throw new Error("Argument to bless must be a Function");
   }
 
-  if ( func.__interpolPartial ) {
+  if ( func.__interpolFunction ) {
     return func;
   }
 
-  blessedWrapper.__interpolPartial = true;
+  blessedWrapper.__interpolFunction = true;
   return blessedWrapper;
 
   function blessedWrapper() {
@@ -526,7 +539,7 @@ function compile(parseOutput, localOptions) {
     return closureEvaluator;
 
     function closureEvaluator(ctx /*, writer */) {
-      bodyEvaluator.__interpolPartial = true;
+      bodyEvaluator.__interpolFunction = true;
       ctx[name] = bodyEvaluator;
 
       function bodyEvaluator(writer) {
@@ -550,11 +563,11 @@ function compile(parseOutput, localOptions) {
     function callEvaluator(ctx, writer) {
       var func = member(ctx, writer);
 
-      if ( typeof func !== 'function' || !func.__interpolPartial ) {
+      if ( typeof func !== 'function' || !func.__interpolFunction ) {
         if ( ctx.__interpolExports ) {
           return;
         }
-        throw new Error("Attempting to call a non-partial");
+        throw new Error("Attempting to call an unblessed function");
       }
 
       var callArgs = [writer];
@@ -931,7 +944,7 @@ function compile(parseOutput, localOptions) {
     return dynamicFormatEvaluator;
 
     function builtFormatEvaluator(ctx, writer) {
-      return template($2(ctx, writer));
+      return template($2(ctx, writer), ctx);
     }
 
     function dynamicFormatEvaluator(ctx, writer) {
@@ -952,7 +965,7 @@ function compile(parseOutput, localOptions) {
         cacheCount++;
       }
 
-      return dynamicTemplate(data);
+      return dynamicTemplate(data, ctx);
     }
   }
 
@@ -1460,26 +1473,28 @@ exports.tan = wrapFunction(Math.tan);
 
 "use strict";
 
+var util = require('../../util')
+  , stringify = util.stringify;
+
 var wrapFunction = require('./wrap');
 
 function lower(writer, value) {
-  return typeof value === 'string' ? value.toLowerCase() : value;
+  return stringify(value).toLowerCase();
 }
 
 function split(writer, value, delim, idx) {
-  var val = String(value).split(delim || ' \n\r\t');
+  var val = stringify(value).split(delim || ' \n\r\t');
   return typeof idx !== 'undefined' ? val[idx] : val;
 }
 
 function title(writer, value) {
-  if ( typeof value !== 'string' ) return value;
-  return value.replace(/\w\S*/g, function (word) {
+  return stringify(value).replace(/\w\S*/g, function (word) {
     return word.charAt(0).toUpperCase() + word.substr(1).toLowerCase();
   });
 }
 
 function upper(writer, value) {
-  return typeof value === 'string' ? value.toUpperCase() : value;
+  return stringify(value).toUpperCase();
 }
 
 // Exports
@@ -1490,7 +1505,7 @@ exports.upper = upper;
 
 exports.string = wrapFunction(String);
 
-},{"./wrap":12}],12:[function(require,module,exports){
+},{"../../util":13,"./wrap":12}],12:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1504,7 +1519,7 @@ exports.string = wrapFunction(String);
 var slice = Array.prototype.slice;
 
 function wrapFunction(func) {
-  wrappedFunction.__interpolPartial = true;
+  wrappedFunction.__interpolFunction = true;
   return wrappedFunction;
 
   function wrappedFunction(writer) {
