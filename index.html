@@ -87,9 +87,9 @@
 
 <div class="highlight highlight-html"><pre>from string import title as titleCase
 
-body("a dynamic title", myContent)
+page("a dynamic title", myContent)
 
-def body(title, content)
+def page(title, content)
   <span class="nt">&lt;html&gt;</span>
     <span class="nt">&lt;head&gt;</span>
       <span class="nt">&lt;title&gt;</span>title | titleCase<span class="nt">&lt;/title&gt;</span>
@@ -125,7 +125,7 @@ end
 <div class="highlight highlight-html"><pre># this is layout.int
 from string import title as titleCase
 
-def body(title, content)
+def page(title, content)
   <span class="nt">&lt;html&gt;</span>
     <span class="nt">&lt;head&gt;</span>
       <span class="nt">&lt;title&gt;</span>title | titleCase<span class="nt">&lt;/title&gt;</span>
@@ -158,10 +158,10 @@ end
 
 <p>And import them like so:</p>
 
-<div class="highlight highlight-html"><pre>from layout import body
+<div class="highlight highlight-html"><pre>from layout import page
 from lists import renderList
 
-body("a dynamic title", myContent)
+page("a dynamic title", myContent)
 
 def myContent
   "this is a list with %length items" % list
