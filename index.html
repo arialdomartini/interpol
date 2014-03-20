@@ -44,7 +44,8 @@
 
 <p><img src="images/logo-small.png" width="174" height="200" align="right">There are a lot of templating systems out there and they're all similar.  In truth, Interpol isn't so different, which might beg the question:</p>
 
-<pre>Why the hell another templating system?</pre>
+<pre><code>Why the hell another templating system?
+</code></pre>
 
 <p>The answer is simple.  I'm sick of looking at a template and feeling as though coding takes a back-seat to presentation.  The two roles seem to have blurred completely in recent years, so why the distinction?  I'm also sick of looking at a template and being unable to read the thing, even if it's one that I wrote yesterday.  That's why I developed Interpol.</p>
 
@@ -56,7 +57,8 @@
 <li>Focus on an experience that favors dynamic content creation</li>
 </ul><p>This last goal is important because the templates we're creating are often devoid of static content.  So why must we 'escape' into a dynamic content mode using braces or processing instructions?  Why don't we just start in that mode and stay there?</p>
 
-<div class="highlight highlight-html"><pre><span class="nt">&lt;html&gt;</span>
+<div class="highlight highlight-html"><pre>from string import title
+<span class="nt">&lt;html&gt;</span>
   <span class="nt">&lt;head&gt;</span>
     <span class="nt">&lt;title&gt;</span>"a static title"<span class="nt">&lt;/title&gt;</span>
   <span class="nt">&lt;/head&gt;</span>
@@ -65,7 +67,7 @@
     <span class="nt">&lt;ul&gt;</span>
     for item in list
       <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
-        item.name
+        item.name | title
       <span class="nt">&lt;/li&gt;</span>
     end
     <span class="nt">&lt;/ul&gt;</span>
@@ -84,10 +86,24 @@
 
 <p>That's all well and good, but what about the ability to reuse templates?  Well, to do that you define partials:</p>
 
-<div class="highlight highlight-html"><pre>def renderItem(item)
-  <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
-    item.name
-  <span class="nt">&lt;/li&gt;</span>
+<div class="highlight highlight-html"><pre>from string import title
+
+body(myContent)
+
+def body(title, content)
+  <span class="nt">&lt;html&gt;</span>
+    <span class="nt">&lt;head&gt;</span>
+      <span class="nt">&lt;title&gt;</span>title<span class="nt">&lt;/title&gt;</span>
+    <span class="nt">&lt;/head&gt;</span>
+    <span class="nt">&lt;body&gt;</span>
+      content()
+    <span class="nt">&lt;/body&gt;</span>
+  <span class="nt">&lt;/html&gt;</span>
+end
+
+def myContent
+  "this is a list with %length items" % list
+  renderList(list)
 end
 
 def renderList(list)
@@ -97,27 +113,33 @@ def renderList(list)
   end
   <span class="nt">&lt;/ul&gt;</span>
 end
-
-<span class="nt">&lt;html&gt;</span>
-  <span class="nt">&lt;head&gt;</span>
-    <span class="nt">&lt;title&gt;</span>"a static title"<span class="nt">&lt;/title&gt;</span>
-  <span class="nt">&lt;/head&gt;</span>
-  <span class="nt">&lt;body&gt;</span>
-    "this is a list with %length items" % list
-    renderList(list)
-  <span class="nt">&lt;/body&gt;</span>
-<span class="nt">&lt;/html&gt;</span>
-</pre></div>
-
-<p>What if you use these partials in multiple templates?  Then you can move them out into their own module called <code>mystuff.int</code></p>
-
-<div class="highlight highlight-html"><pre># this is mystuff.int
 
 def renderItem(item)
   <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
-    item.name
+    item.name | title
   <span class="nt">&lt;/li&gt;</span>
 end
+</pre></div>
+
+<p>What if you use these partials in multiple templates?  Then you can move them out into their own modules, maybe called <code>layout.int</code> and <code>lists.int</code>.</p>
+
+<div class="highlight highlight-html"><pre># this is layout.int
+
+def body(title, content)
+  <span class="nt">&lt;html&gt;</span>
+    <span class="nt">&lt;head&gt;</span>
+      <span class="nt">&lt;title&gt;</span>title<span class="nt">&lt;/title&gt;</span>
+    <span class="nt">&lt;/head&gt;</span>
+    <span class="nt">&lt;body&gt;</span>
+      content()
+    <span class="nt">&lt;/body&gt;</span>
+  <span class="nt">&lt;/html&gt;</span>
+end
+</pre></div>
+
+<div class="highlight highlight-html"><pre># this is lists.int
+
+from string import title
 
 def renderList(list)
   <span class="nt">&lt;ul&gt;</span>
@@ -125,23 +147,29 @@ def renderList(list)
     renderItem(item)
   end
   <span class="nt">&lt;/ul&gt;</span>
+end
+
+def renderItem(item)
+  <span class="nt">&lt;li</span> <span class="na">class=</span><span class="s">item.type</span> <span class="na">id=</span><span class="s">"id-%id"</span> <span class="err">%</span> <span class="na">item</span><span class="nt">&gt;</span>
+    item.name | title
+  <span class="nt">&lt;/li&gt;</span>
 end
 </pre></div>
 
 <p>And import them like so:</p>
 
-<div class="highlight highlight-html"><pre>from mystuff import renderList
+<div class="highlight highlight-html"><pre>from layout import body
+from lists import renderList
 
-<span class="nt">&lt;html&gt;</span>
-  <span class="nt">&lt;head&gt;</span>
-    <span class="nt">&lt;title&gt;</span>"a static title"<span class="nt">&lt;/title&gt;</span>
-  <span class="nt">&lt;/head&gt;</span>
-  <span class="nt">&lt;body&gt;</span>
-    "this is a list with %length items" % list
-    renderList(list)
-  <span class="nt">&lt;/body&gt;</span>
-<span class="nt">&lt;/html&gt;</span>
+body(myContent)
+
+def myContent
+  "this is a list with %length items" % list
+  renderList(list)
+end
 </pre></div>
+
+<p>Easy as pie!  And your primary template gets right to the point.</p>
 
 <h2>
 <a name="resources" class="anchor" href="#resources"><span class="octicon octicon-link"></span></a>Resources</h2>
