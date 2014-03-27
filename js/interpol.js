@@ -13,16 +13,15 @@
 window.$interpol = require('../lib/interpol');
 
 // Resolvers
-require('../lib/resolvers/system');
-require('../lib/resolvers/helper');
 require('../lib/resolvers/memory');
+require('../lib/resolvers/system');
 
 // Writers
 require('../lib/writers/null');
 require('../lib/writers/array');
 require('../lib/writers/dom');
 
-},{"../lib/interpol":3,"../lib/resolvers/helper":5,"../lib/resolvers/memory":6,"../lib/resolvers/system":8,"../lib/writers/array":13,"../lib/writers/dom":14,"../lib/writers/null":15}],2:[function(require,module,exports){
+},{"../lib/interpol":3,"../lib/resolvers/memory":4,"../lib/resolvers/system":6,"../lib/writers/array":11,"../lib/writers/dom":12,"../lib/writers/null":13}],2:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -43,7 +42,7 @@ var Digits = "[1-9][0-9]*"
   , Params = "(.?)%(("+Digits+")|("+Ident+"))?(([|]"+Ident+")*)?";
              // "%" ( digits | identifier )? ( "|" identifier )*
 
-var ParamRegex = new RegExp(Params);
+var ParamRegex = new RegExp(Params, "m");
 
 function buildTemplate(formatStr) {
   var funcs = []
@@ -72,14 +71,14 @@ function buildTemplate(formatStr) {
     }
 
     var idx = autoIdx++;
-    if ( typeof paramMatch[4] !== 'undefined' ) {
+    if ( paramMatch[4] ) {
       idx = paramMatch[4];
     }
-    else if ( typeof paramMatch[3] !== 'undefined' ) {
+    else if ( paramMatch[3] ) {
       idx = parseInt(paramMatch[3], 10) - 1;
     }
 
-    if ( typeof paramMatch[5] !== 'undefined' ) {
+    if ( paramMatch[5] ) {
       var formatters = paramMatch[5].slice(1).split('|');
       funcs.push(createPipedFunction(idx, formatters));
       templateFunction.__requiresContext = true;
@@ -164,7 +163,7 @@ function buildTemplate(formatStr) {
 // Exports
 exports.buildTemplate = buildTemplate;
 
-},{"./util":12,"./writers/null":15}],3:[function(require,module,exports){
+},{"./util":10,"./writers/null":13}],3:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -179,6 +178,7 @@ var util = require('./util')
   , format = require('./format');
 
 var isArray = util.isArray
+  , isInterpolJSON = util.isInterpolJSON
   , mixin = util.mixin
   , configure = util.configure
   , bless = util.bless
@@ -188,7 +188,7 @@ var isArray = util.isArray
   , stringify = util.stringify
   , buildTemplate = format.buildTemplate;
 
-var CURRENT_VERSION = "0.3.3"
+var CURRENT_VERSION = "0.3.4"
   , TemplateCacheMax = 256
   , globalOptions = { writer: null, errorCallback: null }
   , globalContext = {}
@@ -212,14 +212,14 @@ interpol.compile = compile;
 
 function interpol(template, options) {
   var parseOutput = null;
-  if ( typeof template === 'object' && template.i == 'interpol' ) {
-    if ( !template.n || !template.l ) {
-      throw new Error("Syntax elements missing from parse output");
-    }
+  if ( isInterpolJSON(template) ) {
     parseOutput = template;
   }
-  else {
+  else if ( typeof template === 'string' ) {
     parseOutput = parse(template);
+  }
+  else {
+    throw new Error("template must be a String or JSON Object");
   }
   return compile(parseOutput, options);
 }
@@ -246,8 +246,7 @@ function compile(parseOutput, localOptions) {
     , NullWriter = interpol.createNullWriter();
 
   var Evaluators = freezeObject({
-    im: createModuleEvaluator,
-    mi: createImportEvaluator,
+    im: createImportEvaluator,
     de: createPartialEvaluator,
     ca: createCallEvaluator,
     as: createAssignEvaluator,
@@ -284,7 +283,7 @@ function compile(parseOutput, localOptions) {
     , compilerOptions = mixin({}, globalOptions, localOptions)
     , cacheModules = compilerOptions.cache
     , resolvers = compilerOptions.resolvers || globalResolvers
-    , evaluator = wrapEvaluator(parseOutput.n)
+    , evaluator = wrapLiteral(createStatementsEvaluator(parseOutput.n))
     , exportedContext = null;
 
   compiledTemplate.configure = configureTemplate;
@@ -331,15 +330,14 @@ function compile(parseOutput, localOptions) {
   
   // Evaluator Generation Utilities *****************************************
 
-  function wrapEvaluator(node) {
-    var result = createEvaluator(node);
-    if ( typeof result === 'function' ) {
-      return result;
+  function wrapLiteral(value) {
+    if ( typeof value === 'function' ) {
+      return value;
     }
-    return evalWrapper;
+    return wrapper;
 
-    function evalWrapper() {
-      return result;
+    function wrapper() {
+      return value;
     }
   }
 
@@ -350,7 +348,7 @@ function compile(parseOutput, localOptions) {
 
     var result = [];
     for ( var i = arrayNodes.length - 1; i >= 0; i-- ) {
-      result[i] = wrapEvaluator(arrayNodes[i]);
+      result[i] = wrapLiteral(createEvaluator(arrayNodes[i]));
     }
     return result;
   }
@@ -389,7 +387,8 @@ function compile(parseOutput, localOptions) {
     var result = [];
     for ( var i = 0, len = assignNodes.length; i < len; i++ ) {
       var assignNode = assignNodes[i];
-      result[i] = [lits[assignNode[0]], wrapEvaluator(assignNode[1])];
+      result[i] = [lits[assignNode[0]],
+                  wrapLiteral(createEvaluator(assignNode[1]))];
     }
     return result;
   }
@@ -423,11 +422,9 @@ function compile(parseOutput, localOptions) {
     return statementsEvaluator;
 
     function statementsEvaluator(ctx, writer) {
-      var result = null;
       for ( var i = slen; i >= 0; i-- ) {
-        result = statements[i](ctx, writer);
+        statements[i](ctx, writer);
       }
-      return result;
     }
   }
 
@@ -439,15 +436,10 @@ function compile(parseOutput, localOptions) {
 
   // Evaluator Generation ***************************************************
 
-  function createModuleEvaluator(statementNodes) {
-    return createStatementsEvaluator(statementNodes);
-  }
-
   function createImportEvaluator(fromNodes) {
     var importList = []
       , ilen = fromNodes.length - 1
-      , evaluator = dynamicEvaluator
-      , cachedImports = null;
+      , evaluator = cacheModules ? cacheableEvaluator : dynamicEvaluator;
 
     for ( var i = ilen; i >= 0; i-- ) {
       var fromNode = fromNodes[i]
@@ -478,17 +470,22 @@ function compile(parseOutput, localOptions) {
     return importEvaluator;
 
     function importEvaluator(ctx, writer) {
-      return evaluator(ctx, writer);
+      evaluator(ctx, writer);
     }
 
-    function cachedEvaluator(ctx, writer) {
-      cachedImports(ctx);
+    function cacheableEvaluator(ctx, writer) {
+      if ( ctx.__interpolExports ) {
+        dynamicEvaluator(ctx, writer);
+        return;
+      }
+
+      var target = {};
+      dynamicEvaluator(target, writer);
+      evaluator = createStaticMixin(target);
+      evaluator(ctx);
     }
 
     function dynamicEvaluator(ctx, writer) {
-      var generateCache = cacheModules && !ctx.__interpolExports
-        , target = generateCache ? {} : ctx;
-
       for ( var i = ilen; i >= 0; i-- ) {
         var importItem = importList[i]
           , moduleName = importItem[0]
@@ -500,18 +497,12 @@ function compile(parseOutput, localOptions) {
         if ( toResolve ) {
           for ( var j = toResolve.length - 1; j >= 0; j-- ) {
             var aliasMap = toResolve[j];
-            target[aliasMap[0]] = moduleExports[aliasMap[1]];
+            ctx[aliasMap[0]] = moduleExports[aliasMap[1]];
           }
         }
         else {
-          target[moduleAlias] = moduleExports;
+          ctx[moduleAlias] = moduleExports;
         }
-      }
-
-      if ( generateCache ) {
-        evaluator = cachedEvaluator;
-        cachedImports = createStaticMixin(target);
-        cachedImports(ctx);
       }
     }
 
@@ -1063,95 +1054,7 @@ function compile(parseOutput, localOptions) {
 // Exports
 module.exports = interpol;
 
-},{"./format":2,"./util":12}],4:[function(require,module,exports){
-/**
- * Interpol (Templates Sans Facial Hair)
- * Licensed under the MIT License
- * see doc/LICENSE.md
- *
- * @author Thom Bradford (github/kode4food)
- */
-
-"use strict";
-
-function createModuleCache() {
-  var cache = {};
-
-  return {
-    exists: exists,
-    getModule: getModule,
-    getExports: getExports,
-    putModule: putModule,
-    removeModule: removeModule
-  };
-
-  function exists(name) {
-    return cache[name];
-  }
-
-  function getModule(name) {
-    var result = cache[name];
-    return result ? result.module : null;
-  }
-
-  function getExports(name) {
-    var result = cache[name];
-    if ( !result ) {
-      return null;
-    }
-
-    if ( !result.dirtyExports ) {
-      return result.moduleExports;
-    }
-
-    var moduleExports = result.moduleExports
-      , key = null;
-
-    if ( !moduleExports ) {
-      moduleExports = result.moduleExports = {};
-    }
-    else {
-      // This logic is necessary because another module may already be
-      // caching this result as a dependency.
-      for ( key in moduleExports ) {
-        if ( moduleExports.hasOwnProperty(key) ) {
-          delete moduleExports[key];
-        }
-      }
-    }
-
-    var exported = result.module.exports();
-    for ( key in exported ) {
-      if ( exported.hasOwnProperty(key) ) {
-        moduleExports[key] = exported[key];
-      }
-    }
-
-    result.dirtyExports = false;
-    return moduleExports;
-  }
-
-  function putModule(name, module) {
-    var cached = cache[name];
-    if ( cached ) {
-      cached.module = module;
-      cached.dirtyExports = true;
-    }
-    else {
-      cached = cache[name] = { module: module, dirtyExports: true };
-    }
-    return cached.module;
-  }
-
-  function removeModule(name) {
-    delete cache[name];
-  }
-}
-
-// Exports
-exports.createModuleCache = createModuleCache;
-
-},{}],5:[function(require,module,exports){
+},{"./format":2,"./util":10}],4:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1165,97 +1068,61 @@ exports.createModuleCache = createModuleCache;
 var interpol = require('../interpol')
   , util = require('../util');
 
-var bless = util.bless;
-
-// Implementation ***********************************************************
-
-function createHelperResolver(options) {
-  options = options || {};
-
-  var moduleName = options.name || 'helpers'
-    , moduleExports = {};
-
-  return {
-    resolveModule: resolveModule,
-    resolveExports: resolveExports,
-    registerHelper: registerHelper,
-    unregisterHelper: unregisterHelper
-  };
-
-  function resolveModule(name) {
-    return null;
-  }
-
-  function resolveExports(name) {
-    return name === moduleName ? moduleExports : null;
-  }
-
-  function registerHelper(name, func) {
-    if ( typeof name === 'function' ) {
-      func = name;
-      if ( !func.name ) {
-        throw new Error("Function requires a name");
-      }
-      name = func.name;
-    }
-    moduleExports[name] = bless(func);
-  }
-
-  function unregisterHelper(name) {
-    if ( typeof name === 'function' ) {
-      name = name.name;
-    }
-    if ( name ) {
-      delete moduleExports[name];
-    }
-  }
-}
-
-// Add Default Helper Resolver
-var helperResolver = createHelperResolver();
-interpol.helperResolver = helperResolver;
-interpol.resolvers().push(helperResolver);
-
-// Exports
-interpol.createHelperResolver = createHelperResolver;
-exports.createHelperResolver = createHelperResolver;
-
-},{"../interpol":3,"../util":12}],6:[function(require,module,exports){
-/**
- * Interpol (Templates Sans Facial Hair)
- * Licensed under the MIT License
- * see doc/LICENSE.md
- *
- * @author Thom Bradford (github/kode4food)
- */
-
-"use strict";
-
-var interpol = require('../interpol')
-  , modules = require('../modules');
+var slice = Array.prototype.slice
+  , isArray = util.isArray
+  , isInterpolJSON = util.isInterpolJSON
+  , bless = util.bless
+  , configure = util.configure;
 
 // Implementation ***********************************************************
 
 function createMemoryResolver(options) {
-  var cache = modules.createModuleCache();
+  var cache = {};
 
   return {
-    resolveModule: cache.getModule,
-    resolveExports: cache.getExports,
-    unregisterModule: cache.removeModule,
+    resolveModule: resolveModule,
+    resolveExports: resolveExports,
+    unregisterModule: unregisterModule,
     registerModule: registerModule
   };
 
+  function resolveModule(name) {
+    var result = cache[name];
+    return result ? result.module : null;
+  }
+
+  function resolveExports(name) {
+    var result = cache[name];
+    if ( !result ) {
+      return null;
+    }
+
+    if ( result.moduleExports ) {
+      return result.moduleExports;
+    }
+
+    var moduleExports = result.moduleExports = result.module.exports();
+    return moduleExports;
+  }
+
+  function unregisterModule(name) {
+    delete cache[name];
+  }
+   
   function registerModule(name, module) {
     if ( typeof module === 'function' &&
          typeof module.exports === 'function' ) {
-      cache.putModule(name, module);
+      cache[name] = { module: module };
       return;
     }
 
-    if ( typeof module === 'string' ||
-         typeof module.length === 'number' ) {
-      cache.putModule(name, interpol(module));
+    if ( typeof module === 'string' || isInterpolJSON(module) ) {
+      cache[name] = { module: interpol(module) };
+      return;
+    }
+
+    if ( typeof module === 'object' && !isArray(module) ) {
+      cache[name] = { moduleExports: blessModule(module) };
       return;
     }
 
@@ -1263,16 +1130,47 @@ function createMemoryResolver(options) {
   }
 }
 
+// Utilities ****************************************************************
+
+function blessModule(module) {
+  var result = {};
+  for ( var key in module ) {
+    var value = module[key];
+    if ( typeof value === 'function') {
+      result[key] = configurable(bless(value));
+    }
+    else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function configurable(func) {
+  blessedConfigure.__interpolFunction = true;
+  func.configure = blessedConfigure;
+  return func;
+
+  function blessedConfigure(writer) {
+    // writer, value are always passed to configurables, hence the '2'
+    var configured = configure(func, 2, slice.call(arguments, 1));
+    configured.__interpolFunction = true;
+    return configured;
+  }
+}
+
 // Add Default Memory Resolver
-var memoryResolver = createMemoryResolver();
-interpol.memoryResolver = memoryResolver;
-interpol.resolvers().push(memoryResolver);
+var defaultMemoryResolver = createMemoryResolver();
+interpol.resolvers().push(defaultMemoryResolver);
+interpol.registerModule = defaultMemoryResolver.registerModule;
+interpol.unregisterModule = defaultMemoryResolver.unregisterModule;
 
 // Exports
+exports.defaultMemoryResolver = defaultMemoryResolver;
 exports.createMemoryResolver = createMemoryResolver;
 interpol.createMemoryResolver = createMemoryResolver;
 
-},{"../interpol":3,"../modules":4}],7:[function(require,module,exports){
+},{"../interpol":3,"../util":10}],5:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1285,7 +1183,7 @@ interpol.createMemoryResolver = createMemoryResolver;
 
 var util = require('../../util')
   , isArray = util.isArray;
-  
+
 function first(writer, value) {
   if ( !isArray(value) ) {
     return value;
@@ -1323,7 +1221,7 @@ exports.last = last;
 exports.length = length;
 exports.empty = empty;
 
-},{"../../util":12}],8:[function(require,module,exports){
+},{"../../util":10}],6:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1334,65 +1232,14 @@ exports.empty = empty;
 
 "use strict";
 
-var interpol = require('../../interpol')
-  , util = require('../../util')
-  , wrap = require('./wrap');
+var memory = require('../memory')
+  , defaultMemoryResolver = memory.defaultMemoryResolver;
 
-var freezeObject = util.freezeObject
-  , bless = util.bless
-  , configurable = wrap.configurable;
+defaultMemoryResolver.registerModule('math', require('./math'));
+defaultMemoryResolver.registerModule('array', require('./array'));
+defaultMemoryResolver.registerModule('string', require('./string'));
 
-// Implementation ***********************************************************
-
-function createSystemResolver() {
-  var modules = buildModules();
-
-  return {
-    resolveModule: resolveModule,
-    resolveExports: resolveExports
-  };
-
-  function resolveModule(name) {
-    return null;
-  }
-  
-  function resolveExports(name) {
-    return modules[name];
-  }
-}
-
-function buildModules() {
-  return freezeObject({
-    math: blessModule(require('./math')),
-    array: blessModule(require('./array')),
-    string: blessModule(require('./string'))
-  });
-}
-
-function blessModule(module) {
-  var result = {};
-  for ( var key in module ) {
-    var value = module[key];
-    if ( typeof value === 'function') {
-      result[key] = configurable(bless(value));
-    }
-    else {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-// Add Default System Resolver
-var systemResolver = createSystemResolver();
-interpol.systemResolver = systemResolver;
-interpol.resolvers().push(systemResolver);
-
-// Exports
-exports.createSystemResolver = createSystemResolver;
-interpol.createSystemResolver = createSystemResolver;
-
-},{"../../interpol":3,"../../util":12,"./array":7,"./math":9,"./string":10,"./wrap":11}],9:[function(require,module,exports){
+},{"../memory":4,"./array":5,"./math":7,"./string":8}],7:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1406,7 +1253,7 @@ interpol.createSystemResolver = createSystemResolver;
 var util = require('../../util')
   , isArray = util.isArray;
 
-var wrap = require('./wrap').wrap;
+var wrap = require('./wrap');
 
 function avg(writer, value) {
   if ( !isArray(value) ) {
@@ -1459,6 +1306,7 @@ exports.median = median;
 exports.min = min;
 exports.sum = sum;
 
+// Math functions
 exports.number = wrap(Number);
 exports.abs = wrap(Math.abs);
 exports.acos = wrap(Math.acos);
@@ -1487,7 +1335,7 @@ exports.PI = Math.PI;
 exports.SQRT1_2 = Math.SQRT1_2;
 exports.SQRT2 = Math.SQRT2;
 
-},{"../../util":12,"./wrap":11}],10:[function(require,module,exports){
+},{"../../util":10,"./wrap":9}],8:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1501,7 +1349,7 @@ exports.SQRT2 = Math.SQRT2;
 var util = require('../../util')
   , stringify = util.stringify;
 
-var wrap = require('./wrap').wrap;
+var wrap = require('./wrap');
 
 function lower(writer, value) {
   return stringify(value).toLowerCase();
@@ -1530,7 +1378,7 @@ exports.upper = upper;
 
 exports.string = wrap(String);
 
-},{"../../util":12,"./wrap":11}],11:[function(require,module,exports){
+},{"../../util":10,"./wrap":9}],9:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1541,11 +1389,10 @@ exports.string = wrap(String);
 
 "use strict";
 
-var util = require('../../util');
+var util = require('../../util')
+  , bless = util.bless;
 
-var slice = Array.prototype.slice
-  , bless = util.bless
-  , configure = util.configure;
+var slice = Array.prototype.slice;
 
 function wrap(func) {
   return bless(wrappedFunction);
@@ -1556,24 +1403,10 @@ function wrap(func) {
   }
 }
 
-function configurable(func) {
-  blessedConfigure.__interpolFunction = true;
-  func.configure = blessedConfigure;
-  return func;
+// Export
+module.exports = wrap;
 
-  function blessedConfigure(writer) {
-    // writer, value are always passed to configurables, hence the '2'
-    var configured = configure(func, 2, slice.call(arguments, 1));
-    configured.__interpolFunction = true;
-    return configured;
-  }
-}
-
-// Exports
-exports.wrap = wrap;
-exports.configurable = configurable;
-
-},{"../../util":12}],12:[function(require,module,exports){
+},{"../../util":10}],10:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1663,6 +1496,16 @@ function createStaticMixin(obj) {
     }
     return target;
   }
+}
+
+function isInterpolJSON(value) {
+  return typeof value === 'object' &&
+    value !== null &&
+    value.i === 'interpol' &&
+    typeof value.v === 'string' &&
+    !isArray(value) &&
+    isArray(value.l) &&
+    isArray(value.n);
 }
 
 // String Handling ************************************************************
@@ -1774,6 +1617,7 @@ exports.extendContext = extendContext;
 exports.freezeObject = freezeObject;
 exports.objectKeys = objectKeys;
 exports.createStaticMixin = createStaticMixin;
+exports.isInterpolJSON = isInterpolJSON;
 exports.escapeAttribute = escapeAttribute;
 exports.escapeContent = escapeContent;
 exports.stringify = stringify;
@@ -1781,7 +1625,7 @@ exports.formatSyntaxError = formatSyntaxError;
 exports.bless = bless;
 exports.configure = configure;
 
-},{}],13:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1865,7 +1709,7 @@ function createArrayWriter(arr) {
 exports.createArrayWriter = createArrayWriter;
 interpol.createArrayWriter = createArrayWriter;
 
-},{"../interpol":3,"../util":12}],14:[function(require,module,exports){
+},{"../interpol":3,"../util":10}],12:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1934,7 +1778,7 @@ function createDOMWriter(parentElement, renderMode) {
 exports.createDOMWriter = createDOMWriter;
 interpol.createDOMWriter = createDOMWriter;
 
-},{"../interpol":3,"../util":12,"./array":13}],15:[function(require,module,exports){
+},{"../interpol":3,"../util":10,"./array":11}],13:[function(require,module,exports){
 /**
  * Interpol (Templates Sans Facial Hair)
  * Licensed under the MIT License
@@ -1970,4 +1814,4 @@ function createNullWriter() {
 exports.createNullWriter = createNullWriter;
 interpol.createNullWriter = createNullWriter;
 
-},{"../interpol":3,"../util":12}]},{},[1])
+},{"../interpol":3,"../util":10}]},{},[1])
